@@ -58,6 +58,7 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     //
     // Note we need to convert the port to network order
     struct sockaddr_in server_addr;
+    // zeros initialization of the struct
     std::memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;         // IPv4
     server_addr.sin_port = htons(port);       // TCP port number
@@ -94,7 +95,7 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
 
     // Start listening. The second parameter is the "backlog", or the maximum number of
     // connections that we'll allow to queue up. Note that listen() doesn't block until
-    // incoming connections arrive. It just makesthe OS aware that this process is willing
+    // incoming connections arrive. It just makes the OS aware that this process is willing
     // to accept connections on this socket (which is bound to a specific IP and port)
     if (listen(_server_socket, 5) == -1) {
         close(_server_socket);
@@ -156,7 +157,7 @@ void ServerImpl::OnRun() {
         // Configure read timeout
         {
             struct timeval tv;
-            tv.tv_sec = 5; // TODO: make it configurable
+            tv.tv_sec = 1   ; // TODO: make it configurable
             tv.tv_usec = 0;
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
@@ -218,7 +219,6 @@ void ServerImpl::OnRun() {
 
                         std::string result;
                         command_to_execute->Execute(*pStorage, argument_for_command, result);
-
                         // Send response
                         result += "\r\n";
                         if (send(client_socket, result.data(), result.size(), 0) <= 0) {

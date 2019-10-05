@@ -39,7 +39,7 @@ public:
         console.color = true;
 
         Logging::Logger &logger = logConfig->loggers["root"];
-        logger.level = Logging::Logger::Level::WARNING;
+        logger.level = Logging::Logger::Level::DEBUG;
         logger.appenders.push_back("console");
         logger.format = "[%H:%M:%S %z] [thread %t] [%n] [%l] %v";
         logService.reset(new Logging::ServiceImpl(logConfig));
@@ -86,7 +86,7 @@ public:
         log->warn("Start storage");
         storage->Start();
 
-        // TODO: configure network service
+        // TODO: configure network servic
         const uint16_t port = 8080;
         log->warn("Start network on {}", port);
         server->Start(port, 2, 2);

@@ -16,11 +16,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <spdlog/logger.h>
+#include "spdlog/logger.h"
 
-#include <afina/Storage.h>
-#include <afina/execute/Command.h>
-#include <afina/logging/Service.h>
+#include "afina/Storage.h"
+#include "afina/execute/Command.h"
+#include "afina/logging/Service.h"
 
 #include "protocol/Parser.h"
 
@@ -34,9 +34,23 @@ ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Loggi
 // See Server.h
 ServerImpl::~ServerImpl() {}
 
-// See Server.h
-// void ServerImpl::_handleMessage(const int client_socket);
 
+// See Server.h
+void ServerImpl::Stop() {
+    running.store(false);
+    shutdown(_server_socket, SHUT_RDWR);
+}
+
+// See Server.h
+void ServerImpl::Join() {
+
+    assert(_thread.joinable());
+    _thread.join();
+    close(_server_socket);
+}
+
+
+// See Server.h
 void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     _logger = pLogging->select("network");
     _logger->info("Start mt_blocking network service");
@@ -76,27 +90,8 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     running.store(true);
+    connections.store(0);
     _thread = std::thread(&ServerImpl::OnRun, this);
-}
-
-// See Server.h
-void ServerImpl::Stop() {
-    running.store(false);
-    shutdown(_server_socket, SHUT_RDWR);
-}
-
-// See Server.h
-void ServerImpl::Join() {
-    _logger->debug("In join");
-
-    /*for (std::thread &connection : _connections) {
-        assert(connection.joinable());
-        connection.join();
-    }*/
-
-    assert(_thread.joinable());
-    _thread.join();
-    close(_server_socket);
 }
 
 // See Server.h
@@ -140,20 +135,23 @@ void ServerImpl::OnRun() {
         }
 
         // handler = std::thread(&ServerImpl::_handleMessage, this, client_socket);
-        _connections.emplace_back(&ServerImpl::_handleMessage, this, client_socket);
+        std::thread handler = std::thread(&ServerImpl::_handleConnection, this, client_socket);
+        handler.detach();
+        connections++;
     }
 
-    for (std::thread &connection : _connections) {
-        connection.join();
+    std::unique_lock<std::mutex> lk(_m);
+    while(connections.load()){
+        _cv.wait(lk);
     }
 
     // Cleanup on exit...
     _logger->warn("Network stopped");
 }
 
-void ServerImpl::_handleMessage(const int client_socket) {
+void ServerImpl::_handleConnection(const int client_socket) {
 
-    _logger->debug("thread starts");
+    _logger->debug("open new connection");
     std::size_t arg_remains;
     Protocol::Parser parser;
     std::string argument_for_command;
@@ -162,7 +160,7 @@ void ServerImpl::_handleMessage(const int client_socket) {
     try {
         int readed_bytes = -1;
         char client_buffer[4096];
-        while (running.load() && ((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0)) {
+        while (((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) && running.load()) {
 
             _logger->debug("Got {} bytes from socket", readed_bytes);
             while (readed_bytes > 0) {
@@ -204,6 +202,7 @@ void ServerImpl::_handleMessage(const int client_socket) {
                     _logger->debug("Start command execution");
 
                     std::string result;
+
                     command_to_execute->Execute(*pStorage, argument_for_command, result);
 
                     // Send response
@@ -224,6 +223,8 @@ void ServerImpl::_handleMessage(const int client_socket) {
     }
     _logger->debug("Connection closed!");
     close(client_socket);
+    connections--;
+    _cv.notify_one();
 }
 
 } // namespace MTblocking

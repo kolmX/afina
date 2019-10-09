@@ -3,8 +3,10 @@
 
 #include <atomic>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 
-#include <afina/network/Server.h>
+#include "afina/network/Server.h"
 
 namespace spdlog {
 class logger;
@@ -46,15 +48,16 @@ private:
     // flag must be atomic in order to safely publisj changes cross thread
     // bounds
     std::atomic<bool> running;
-
+    std::atomic<int> connections;
     // Server socket to accept connections on
     int _server_socket;
 
     // Thread to run network on
     std::thread _thread;
-    std::vector<std::thread> _connections;
+    std::mutex _m;
+    std::condition_variable _cv;
 
-    void _handleMessage(const int client_socket);
+    void _handleConnection(const int client_socket);
 };
 
 } // namespace MTblocking

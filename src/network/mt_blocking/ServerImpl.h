@@ -38,9 +38,12 @@ protected:
     /**
      * Method is running in the connection acceptor thread
      */
-    void OnRun();
+    void OnRun(const uint32_t n_workers);
 
 private:
+
+    void handleConnection(const int client_socket);
+
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
 
@@ -51,13 +54,14 @@ private:
     std::atomic<int> connections;
     // Server socket to accept connections on
     int _server_socket;
+    std::vector<int> _client_sockets;
 
     // Thread to run network on
     std::thread _thread;
-    std::mutex _m;
+    std::mutex _mutex;
     std::condition_variable _cv;
 
-    void _handleConnection(const int client_socket);
+
 };
 
 } // namespace MTblocking

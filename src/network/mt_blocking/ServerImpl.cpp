@@ -32,12 +32,17 @@ namespace MTblocking {
 ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl) : Server(ps, pl) {}
 
 // See Server.h
-ServerImpl::~ServerImpl() {}
+ServerImpl::~ServerImpl() {
+    _client_sockets.clear();
+}
 
 
 // See Server.h
 void ServerImpl::Stop() {
     running.store(false);
+    for (int socket : _client_sockets){
+        shutdown(socket, SHUT_RD);
+    }
     shutdown(_server_socket, SHUT_RDWR);
 }
 
@@ -84,24 +89,23 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
         throw std::runtime_error("Socket bind() failed");
     }
 
-    if (listen(_server_socket, 5) == -1) {
+    if (listen(_server_socket, n_accept) == -1) {
         close(_server_socket);
         throw std::runtime_error("Socket listen() failed");
     }
 
     running.store(true);
     connections.store(0);
-    _thread = std::thread(&ServerImpl::OnRun, this);
+    _thread = std::thread(&ServerImpl::OnRun, this, n_workers);
 }
 
 // See Server.h
-void ServerImpl::OnRun() {
+void ServerImpl::OnRun(const uint32_t n_workers) {
     // Here is connection state
     // - parser: parse state of the stream
     // - command_to_execute: last command parsed out of stream
     // - arg_remains: how many bytes to read from stream to get command argument
     // - argument_for_command: buffer stores argument
-
     while (running.load()) {
         _logger->debug("waiting for connection...");
 
@@ -133,14 +137,25 @@ void ServerImpl::OnRun() {
             tv.tv_usec = 0;
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
+        //check that max number of connections isn't achived
+        if (connections.load() < n_workers){
+            std::thread handler = std::thread(&ServerImpl::handleConnection, this, client_socket);
+            handler.detach();
+            connections++;
+            _client_sockets.push_back(client_socket);
 
-        // handler = std::thread(&ServerImpl::_handleMessage, this, client_socket);
-        std::thread handler = std::thread(&ServerImpl::_handleConnection, this, client_socket);
-        handler.detach();
-        connections++;
+        }
+
+        else{
+            std::string overflow_msg = "Too much connections on server! Your connection will be closed!\n";
+            if (send(client_socket, overflow_msg.c_str(), overflow_msg.size(), 0) <= 0) {
+                _logger->warn("Failed to send response");
+            }
+            close(client_socket);
+        }
     }
 
-    std::unique_lock<std::mutex> lk(_m);
+    std::unique_lock<std::mutex> lk(_mutex);
     while(connections.load()){
         _cv.wait(lk);
     }
@@ -149,13 +164,15 @@ void ServerImpl::OnRun() {
     _logger->warn("Network stopped");
 }
 
-void ServerImpl::_handleConnection(const int client_socket) {
+void ServerImpl::handleConnection(const int client_socket) {
 
     _logger->debug("open new connection");
     std::size_t arg_remains;
     Protocol::Parser parser;
     std::string argument_for_command;
     std::unique_ptr<Execute::Command> command_to_execute;
+
+
 
     try {
         int readed_bytes = -1;

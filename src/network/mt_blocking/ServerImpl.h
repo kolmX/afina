@@ -51,15 +51,17 @@ private:
     // flag must be atomic in order to safely publisj changes cross thread
     // bounds
     std::atomic<bool> running;
-    std::atomic<int> connections;
+    int connections;
     // Server socket to accept connections on
     int _server_socket;
-    std::vector<int> _client_sockets;
+    std::set<int> active_client_sockets;
 
     // Thread to run network on
     std::thread _thread;
     std::mutex _mutex;
     std::condition_variable _cv;
+
+    std::mutex _connections_mutex;
 
 
 };

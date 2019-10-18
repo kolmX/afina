@@ -37,9 +37,12 @@ ServerImpl::~ServerImpl() {}
 
 // See Server.h
 void ServerImpl::Stop() {
+
+    struct timeval tv = {.tv_sec = 5, .tv_usec = 0};
     running.store(false);
-    for (int socket : _client_sockets){
-        shutdown(socket, SHUT_RD);
+
+    for (int socket : active_client_sockets){
+        setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
     }
     shutdown(_server_socket, SHUT_RDWR);
 }
@@ -93,7 +96,7 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     running.store(true);
-    connections.store(0);
+    connections = 0;
     _thread = std::thread(&ServerImpl::OnRun, this, n_workers);
 }
 
@@ -135,25 +138,29 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
             tv.tv_usec = 0;
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
+
         //check that max number of connections isn't achived
-        if (connections.load() < n_workers){
-            std::thread handler = std::thread(&ServerImpl::handleConnection, this, client_socket);
-            handler.detach();
-            connections++;
-            _client_sockets.push_back(client_socket);
+        {
+            lock_guard<std::mutex> lk(_connections_mutex);
+            if (connections < n_workers){
+                std::thread handler = std::thread(&ServerImpl::handleConnection, this, client_socket);
+                handler.detach();
 
-        }
-
-        else{
-            std::string overflow_msg = "Too much connections on server! Your connection will be closed!\n";
-            if (send(client_socket, overflow_msg.c_str(), overflow_msg.size(), 0) <= 0) {
-                _logger->warn("Failed to send response");
+                connections++;
+                active_client_sockets.insert(client_socket);
             }
-            close(client_socket);
+            else{
+                std::string overflow_msg = "Too much connections on server! Your connection will be closed!\n";
+                if (send(client_socket, overflow_msg.c_str(), overflow_msg.size(), 0) <= 0) {
+                    _logger->warn("Failed to send response");
+                }
+                close(client_socket);
+            }
         }
     }
 
     std::unique_lock<std::mutex> lk(_mutex);
+
     while(connections.load()){
         _cv.wait(lk);
     }
@@ -175,7 +182,7 @@ void ServerImpl::handleConnection(const int client_socket) {
     try {
         int readed_bytes = -1;
         char client_buffer[4096];
-        while (((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) && running.load()) {
+        while (((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0)) {
 
             _logger->debug("Got {} bytes from socket", readed_bytes);
             while (readed_bytes > 0) {
@@ -238,9 +245,16 @@ void ServerImpl::handleConnection(const int client_socket) {
     }
     _logger->debug("Connection closed!");
     close(client_socket);
-    connections--;
-    _cv.notify_one();
-}
+
+    {
+        lock_guard<std::mutex> lk(_connections_mutex);
+        connections--;
+        active_client_sockets.erase(client_socket);
+        if (!connections){
+            _cv.notify_all();
+        }
+    }
+
 
 } // namespace MTblocking
 } // namespace Network

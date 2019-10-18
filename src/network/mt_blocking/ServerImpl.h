@@ -4,6 +4,7 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
+#include <map>
 #include <condition_variable>
 
 #include "afina/network/Server.h"
@@ -42,7 +43,15 @@ protected:
 
 private:
 
-    void handleConnection(const int client_socket);
+    enum class ConnectionState{
+        idle,
+
+        waitArgs,
+
+        executing
+    };
+
+    void handleConnection(std::map<const int, ConnectionState>::iterator it);
 
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
@@ -51,18 +60,21 @@ private:
     // flag must be atomic in order to safely publisj changes cross thread
     // bounds
     std::atomic<bool> running;
-    int connections;
+    std::atomic<int> connections;
     // Server socket to accept connections on
     int _server_socket;
-    std::set<int> active_client_sockets;
+    std::map<const int, ConnectionState> active_clients_state;
 
     // Thread to run network on
     std::thread _thread;
     std::mutex _mutex;
     std::condition_variable _cv;
 
+
     std::mutex _connections_mutex;
 
+    std::mutex _state_mutex;
+    std::condition_variable state_cv;
 
 };
 

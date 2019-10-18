@@ -6,6 +6,7 @@
 #include <memory>
 #include <stdexcept>
 #include <vector>
+#include <chrono>
 
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -38,11 +39,55 @@ ServerImpl::~ServerImpl() {}
 // See Server.h
 void ServerImpl::Stop() {
 
-    struct timeval tv = {.tv_sec = 5, .tv_usec = 0};
+    std::string waiting_msg = "You have 10 seconds that write arguments!!!\n";
     running.store(false);
 
-    for (int socket : active_client_sockets){
-        setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+    std::map<int, ConnectionState>::const_iterator it;
+
+    for (it = active_clients_state.begin(); it != active_clients_state.end(); it++){
+        int client_socket = it->first;
+
+        switch (it->second){
+            case ConnectionState::idle:{
+                shutdown(client_socket, SHUT_RD);
+                break;
+            }
+
+            case ConnectionState::waitArgs:{
+                bool is_timeout = false;
+                if (send(client_socket, waiting_msg.c_str(), waiting_msg.size(), 0) <= 0){
+                    _logger->warn("Failed to send response");
+                }
+
+                {
+                    std::unique_lock<std::mutex> lk(_state_mutex);
+                    while(it->second != ConnectionState::executing){
+                        if (state_cv.wait_for(lk, std::chrono::seconds(10)) == std::cv_status::timeout){
+                            is_timeout = true;
+                            break;
+                        }
+                    }
+
+                    if (is_timeout){
+                        shutdown(client_socket, SHUT_RDWR);
+                        break;
+                    }
+                }
+                //args was writen so go to executing case!
+            }
+
+            case ConnectionState::executing:{
+                {
+                    std::unique_lock<std::mutex> lk(_state_mutex);
+                    while (it->second != ConnectionState::idle){
+                        state_cv.wait(lk);
+                    }
+
+                }
+                shutdown(client_socket, SHUT_RDWR);
+                break;
+            }
+        }
     }
     shutdown(_server_socket, SHUT_RDWR);
 }
@@ -107,6 +152,7 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
     // - command_to_execute: last command parsed out of stream
     // - arg_remains: how many bytes to read from stream to get command argument
     // - argument_for_command: buffer stores argument
+
     while (running.load()) {
         _logger->debug("waiting for connection...");
 
@@ -141,13 +187,19 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
 
         //check that max number of connections isn't achived
         {
-            lock_guard<std::mutex> lk(_connections_mutex);
+            std::lock_guard<std::mutex> lk(_connections_mutex);
             if (connections < n_workers){
-                std::thread handler = std::thread(&ServerImpl::handleConnection, this, client_socket);
-                handler.detach();
 
                 connections++;
-                active_client_sockets.insert(client_socket);
+
+                std::map<const int, ConnectionState>::iterator it;
+                it = active_clients_state.insert(
+                    std::pair<const int, ConnectionState>(client_socket, ConnectionState::idle)
+                ).first;
+
+                std::thread handler = std::thread(&ServerImpl::handleConnection, this, it);
+                handler.detach();
+
             }
             else{
                 std::string overflow_msg = "Too much connections on server! Your connection will be closed!\n";
@@ -160,7 +212,6 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
     }
 
     std::unique_lock<std::mutex> lk(_mutex);
-
     while(connections.load()){
         _cv.wait(lk);
     }
@@ -169,14 +220,15 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
     _logger->warn("Network stopped");
 }
 
-void ServerImpl::handleConnection(const int client_socket) {
+
+void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator it){
 
     _logger->debug("open new connection");
     std::size_t arg_remains;
     Protocol::Parser parser;
     std::string argument_for_command;
     std::unique_ptr<Execute::Command> command_to_execute;
-
+    int client_socket = it->first;
 
 
     try {
@@ -189,6 +241,11 @@ void ServerImpl::handleConnection(const int client_socket) {
                 _logger->debug("Process {} bytes", readed_bytes);
                 // There is no command yet
                 if (!command_to_execute) {
+                    {
+                        std::lock_guard<std::mutex> lk(_state_mutex);
+                        it->second = ConnectionState::idle;
+                    }
+
                     std::size_t parsed = 0;
                     if (parser.Parse(client_buffer, readed_bytes, parsed)) {
                         // There is no command to be launched, continue to parse input stream
@@ -209,6 +266,11 @@ void ServerImpl::handleConnection(const int client_socket) {
 
                 // There is command, but we still wait for argument to arrive...
                 if (command_to_execute && arg_remains > 0) {
+                    {
+                        std::lock_guard<std::mutex> lk (_state_mutex);
+                        it->second = ConnectionState::waitArgs;
+                    }
+
                     _logger->debug("Fill argument: {} bytes of {}", readed_bytes, arg_remains);
                     // There is some parsed command, and now we are reading argument
                     std::size_t to_read = std::min(arg_remains, std::size_t(readed_bytes));
@@ -221,6 +283,12 @@ void ServerImpl::handleConnection(const int client_socket) {
 
                 // Thre is command & argument - RUN!
                 if (command_to_execute && arg_remains == 0) {
+                    {
+                        std::lock_guard<std::mutex> lk(_state_mutex);
+                        it->second = ConnectionState::executing;
+                    }
+                    state_cv.notify_one();
+
                     _logger->debug("Start command execution");
 
                     std::string result;
@@ -237,6 +305,12 @@ void ServerImpl::handleConnection(const int client_socket) {
                     command_to_execute.reset();
                     argument_for_command.resize(0);
                     parser.Reset();
+                    {
+                        std::lock_guard<std::mutex> lk(_state_mutex);
+                        it->second = ConnectionState::idle;
+                    }
+                    state_cv.notify_one();
+
                 }
             }
         }
@@ -247,13 +321,14 @@ void ServerImpl::handleConnection(const int client_socket) {
     close(client_socket);
 
     {
-        lock_guard<std::mutex> lk(_connections_mutex);
+        std::lock_guard<std::mutex> lk(_connections_mutex);
         connections--;
-        active_client_sockets.erase(client_socket);
+        active_clients_state.erase(it);
         if (!connections){
             _cv.notify_all();
         }
     }
+}
 
 
 } // namespace MTblocking

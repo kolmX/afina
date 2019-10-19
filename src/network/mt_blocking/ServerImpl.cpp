@@ -197,8 +197,7 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
                     std::pair<const int, ConnectionState>(client_socket, ConnectionState::idle)
                 ).first;
 
-                std::thread handler = std::thread(&ServerImpl::handleConnection, this, it);
-                handler.detach();
+                executor.Execute(&ServerImpl::handleConnection, this, it);
 
             }
             else{
@@ -210,7 +209,7 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
             }
         }
     }
-
+    executor.Stop();
     std::unique_lock<std::mutex> lk(_mutex);
     while(connections.load()){
         _cv.wait(lk);

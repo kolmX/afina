@@ -6,7 +6,7 @@
 #include <mutex>
 #include <map>
 #include <condition_variable>
-
+#include "afina/concurrency/Executor.h"
 #include "afina/network/Server.h"
 
 namespace spdlog {
@@ -53,12 +53,15 @@ private:
 
     void handleConnection(std::map<const int, ConnectionState>::iterator it);
 
+    //Thread pool
+    Afina::Concurrency::Executor executor;
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
 
     // Atomic flag to notify threads when it is time to stop. Note that
     // flag must be atomic in order to safely publisj changes cross thread
-    // bounds
+    // bound
+
     std::atomic<bool> running;
     std::atomic<int> connections;
     // Server socket to accept connections on

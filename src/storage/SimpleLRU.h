@@ -45,6 +45,7 @@ public:
 
 private:
 
+
     // LRU cache node
     using lru_node = struct lru_node {
         const std::string key;
@@ -59,9 +60,11 @@ private:
     using string_wrapper = std::reference_wrapper<const std::string>;
     using node_wrapper = std::reference_wrapper<lru_node>;
 
+
+    bool prepareLRU(std::size_t record_size);
     // Function that free last elements;
     // Returns number realised bytes
-    bool prepareLRU(std::size_t record_size);
+
     std::size_t freeTail(const size_t req_mem);
     // Add node at head of list
     void addNode(const std::string &key, const std::string &value);

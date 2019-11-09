@@ -7,7 +7,7 @@
 #include <mutex>
 #include <thread>
 
-#include "afina/network/Server.h"
+#include <afina/network/Server.h>
 
 namespace spdlog {
 class logger;

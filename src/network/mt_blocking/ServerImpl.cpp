@@ -17,11 +17,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "spdlog/logger.h"
+#include <spdlog/logger.h>
 
-#include "afina/Storage.h"
-#include "afina/execute/Command.h"
-#include "afina/logging/Service.h"
+#include <afina/Storage.h>
+#include <afina/execute/Command.h>
+#include <afina/logging/Service.h>
 
 #include "protocol/Parser.h"
 

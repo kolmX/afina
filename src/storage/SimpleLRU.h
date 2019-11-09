@@ -7,7 +7,7 @@
 #include <mutex>
 #include <string>
 
-#include "afina/Storage.h"
+#include <afina/Storage.h>
 
 namespace Afina {
 namespace Backend {
@@ -19,8 +19,7 @@ namespace Backend {
 
 class SimpleLRU : public Afina::Storage {
 public:
-    SimpleLRU(size_t max_size = 1024) :
-    _max_size(max_size), _allocated_memory(0) {}
+    SimpleLRU(size_t max_size = 1024) : _max_size(max_size), _allocated_memory(0) {}
 
     ~SimpleLRU();
 
@@ -44,30 +43,28 @@ public:
     void PrintStorage();
 
 private:
-
-
     // LRU cache node
     using lru_node = struct lru_node {
         const std::string key;
-        const std::string value;
+        std::string value;
         lru_node *prev;
         std::unique_ptr<lru_node> next;
 
-        lru_node(const std::string &key, const std::string &value) :
-        key(key), value(value){};
+        lru_node(const std::string &key, const std::string &value) : key(key), value(value){};
     };
 
     using string_wrapper = std::reference_wrapper<const std::string>;
     using node_wrapper = std::reference_wrapper<lru_node>;
 
-
-    bool prepareLRU(std::size_t record_size);
+    bool prepareLRU(const int record_size);
     // Function that free last elements;
     // Returns number realised bytes
 
-    std::size_t freeTail(const size_t req_mem);
+    std::size_t freeTail(const int req_mem);
     // Add node at head of list
     void addNode(const std::string &key, const std::string &value);
+    // move node to head
+    void moveNode(const std::map<string_wrapper, node_wrapper>::iterator &it);
     std::size_t deleteNode(const std::map<string_wrapper, node_wrapper>::iterator &it);
 
     //--------------------------------------------------------------

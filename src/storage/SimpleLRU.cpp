@@ -26,7 +26,7 @@ bool SimpleLRU::Put(const std::string &key, const std::string &value) {
 
     auto it = _lru_index.find(std::ref(key));
     if (it != _lru_index.end()) {
-        prepareLRU(value.size() - it->second.get().value.size());
+        prepareLRU((int)value.size() - (int)it->second.get().value.size());
         moveNode(it);
         _lru_head.get()->value = value;
 
@@ -65,7 +65,7 @@ bool SimpleLRU::Set(const std::string &key, const std::string &value) {
     if (it == _lru_index.end()) {
         return false;
     }
-    prepareLRU(value.size() - it->second.get().value.size());
+    prepareLRU((int)value.size() - (int)it->second.get().value.size());
     moveNode(it);
     _lru_head.get()->value = value;
     return true;

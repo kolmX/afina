@@ -42,15 +42,7 @@ protected:
     void OnRun(const uint32_t n_workers);
 
 private:
-    enum class ConnectionState {
-        idle,
-
-        wait,
-
-        executing
-    };
-
-    void handleConnection(std::map<const int, ConnectionState>::iterator it);
+    void handleConnection(std::vector<const int>::iterator it);
 
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
@@ -59,7 +51,6 @@ private:
     // flag must be atomic in order to safely publisj changes cross thread
     // bounds
     std::atomic<bool> running;
-    int num_connections;
     // Server socket to accept connections on
     int _server_socket;
     std::map<const int, ConnectionState> active_clients;

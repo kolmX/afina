@@ -38,15 +38,15 @@ ServerImpl::~ServerImpl() {}
 // See Server.h
 void ServerImpl::Stop() {
 
-    { std::lock_guard<std::mutex> lk(_mutex); }
-    running.store(false);
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        running.store(false);
+    }
+
     shutdown(_server_socket, SHUT_RDWR);
 
     for (auto connection : active_clients) {
-        std::lock_guard<std::mutex> lk(_mutex);
-        if (connection.second == ConnectionState::idle) {
-            shutdown(connection.first, SHUT_RD);
-        }
+        shutdown(connection.first, SHUT_RD);
     }
 }
 
@@ -146,12 +146,8 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
             std::lock_guard<std::mutex> lk(_mutex);
             if (running.load() && num_connections < n_workers) {
 
-                num_connections++;
-
-                std::map<const int, ConnectionState>::iterator it;
-                std::cout << client_socket << std::endl;
-                it = active_clients.emplace(std::make_pair(client_socket, ConnectionState::idle)).first;
-
+                std::vector<const int>::iterator it;
+                it = active_clients.emplace(client_socket)).first;
                 std::thread handler = std::thread(&ServerImpl::handleConnection, this, it);
                 handler.detach();
 
@@ -172,7 +168,7 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
     _logger->warn("Network stopped");
 }
 
-void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator it) {
+void ServerImpl::handleConnection(std::vector<const int>::iterator it) {
 
     _logger->debug("open new connection");
     std::size_t arg_remains;
@@ -195,10 +191,7 @@ void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator
                 _logger->debug("Process {} bytes", readed_bytes);
                 // There is no command yet
                 if (!command_to_execute) {
-                    {
-                        std::lock_guard<std::mutex> lk(_mutex);
-                        it->second = ConnectionState::wait;
-                    }
+
                     std::size_t parsed = 0;
                     if (parser.Parse(client_buffer, readed_bytes, parsed)) {
                         // There is no command to be launched, continue to parse input stream
@@ -233,10 +226,7 @@ void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator
 
                 // Thre is command & argument - RUN!
                 if (command_to_execute && arg_remains == 0) {
-                    {
-                        std::lock_guard<std::mutex> lk(_mutex);
-                        it->second = ConnectionState::executing;
-                    }
+
                     _logger->debug("Start command execution");
 
                     std::string result;
@@ -252,11 +242,6 @@ void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator
                     command_to_execute.reset();
                     argument_for_command.resize(0);
                     parser.Reset();
-
-                    {
-                        std::lock_guard<std::mutex> lk(_mutex);
-                        it->second = ConnectionState::idle;
-                    }
                 }
             } // while (readed_bytes)
         }
@@ -273,9 +258,8 @@ void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator
     {
         std::lock_guard<std::mutex> lk(_mutex);
         active_clients.erase(it);
-        num_connections--;
         close(client_socket);
-        if (!num_connections) {
+        if (active_clients.empty()) {
             _logger->debug("closed");
             _cv.notify_all();
         }

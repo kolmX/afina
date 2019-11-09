@@ -97,7 +97,6 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     running.store(true);
-    num_connections = 0;
     _thread = std::thread(&ServerImpl::OnRun, this, n_workers);
 }
 

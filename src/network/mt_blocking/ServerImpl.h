@@ -53,7 +53,7 @@ private:
     std::atomic<bool> running;
     // Server socket to accept connections on
     int _server_socket;
-    std::map<const int, ConnectionState> active_clients;
+    std::vector<const int> active_clients;
 
     // Thread to run network on
     std::thread _thread;

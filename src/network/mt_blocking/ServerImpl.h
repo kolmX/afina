@@ -50,8 +50,7 @@ private:
         executing
     };
 
-    using Connection = std::pair<ConnectionState, std::unique_ptr<std::condition_variable>>;
-    void handleConnection(std::map<const int, Connection>::iterator it);
+    void handleConnection(std::map<const int, ConnectionState>::iterator it);
 
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
@@ -60,16 +59,14 @@ private:
     // flag must be atomic in order to safely publisj changes cross thread
     // bounds
     std::atomic<bool> running;
-    std::atomic<int> num_connections;
+    int num_connections;
     // Server socket to accept connections on
     int _server_socket;
-    std::map<const int, Connection> active_clients_state;
+    std::map<const int, ConnectionState> active_clients;
 
     // Thread to run network on
     std::thread _thread;
-    std::mutex _state_mutex;
     std::mutex _mutex;
-
     std::condition_variable _cv;
 };
 

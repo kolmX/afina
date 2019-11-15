@@ -41,12 +41,11 @@ void ServerImpl::Stop() {
     {
         std::lock_guard<std::mutex> lk(_mutex);
         running.store(false);
-    }
+        shutdown(_server_socket, SHUT_RDWR);
 
-    shutdown(_server_socket, SHUT_RDWR);
-
-    for (auto connection : active_clients) {
-        shutdown(connection.first, SHUT_RD);
+        for (auto connection : active_clients) {
+            shutdown(connection.first, SHUT_RD);
+        }
     }
 }
 

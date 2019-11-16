@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include <afina/network/Server.h>
@@ -42,7 +43,7 @@ protected:
     void OnRun(const uint32_t n_workers);
 
 private:
-    void handleConnection(std::vector<const int>::iterator it);
+    void handleConnection(std::set<int>::iterator it);
 
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
@@ -53,7 +54,7 @@ private:
     std::atomic<bool> running;
     // Server socket to accept connections on
     int _server_socket;
-    std::vector<const int> active_clients;
+    std::set<int> active_clients;
 
     // Thread to run network on
     std::thread _thread;

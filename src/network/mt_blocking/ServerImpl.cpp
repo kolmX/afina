@@ -44,7 +44,7 @@ void ServerImpl::Stop() {
         shutdown(_server_socket, SHUT_RDWR);
 
         for (auto connection : active_clients) {
-            shutdown(connection.first, SHUT_RD);
+            shutdown(connection, SHUT_RD);
         }
     }
 }
@@ -144,8 +144,8 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
             std::lock_guard<std::mutex> lk(_mutex);
             if (running.load() && active_clients.size() < n_workers) {
 
-                std::vector<const int>::iterator it;
-                it = active_clients.emplace(client_socket)).first;
+                std::set<int>::iterator it;
+                it = active_clients.emplace(client_socket).first;
                 std::thread handler = std::thread(&ServerImpl::handleConnection, this, it);
                 handler.detach();
 
@@ -166,15 +166,14 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
     _logger->warn("Network stopped");
 }
 
-void ServerImpl::handleConnection(std::vector<const int>::iterator it) {
+void ServerImpl::handleConnection(std::set<int>::iterator it) {
 
-    //start new handler
     _logger->debug("open new connection");
     std::size_t arg_remains;
     Protocol::Parser parser;
     std::string argument_for_command;
     std::unique_ptr<Execute::Command> command_to_execute;
-    int client_socket = it->first;
+    int client_socket = *it;
 
     try {
         int readed_bytes = -1;

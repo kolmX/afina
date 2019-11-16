@@ -142,7 +142,7 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
         // check that max number of connections isn't achived
         {
             std::lock_guard<std::mutex> lk(_mutex);
-            if (running.load() && num_connections < n_workers) {
+            if (running.load() && active_clients.size() < n_workers) {
 
                 std::vector<const int>::iterator it;
                 it = active_clients.emplace(client_socket)).first;
@@ -157,7 +157,7 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
     }
     {
         std::unique_lock<std::mutex> lk(_mutex);
-        while (num_connections) {
+        while (active_clients.size()) {
             _cv.wait(lk);
         }
     }

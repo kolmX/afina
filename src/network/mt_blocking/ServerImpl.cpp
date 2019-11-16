@@ -168,6 +168,7 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
 
 void ServerImpl::handleConnection(std::vector<const int>::iterator it) {
 
+    //start new handler
     _logger->debug("open new connection");
     std::size_t arg_remains;
     Protocol::Parser parser;

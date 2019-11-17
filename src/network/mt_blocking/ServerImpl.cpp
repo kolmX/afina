@@ -5,8 +5,8 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <stdexcept>
-#include <vector>
 
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -145,7 +145,7 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
             if (running.load() && active_clients.size() < n_workers) {
 
                 std::set<int>::iterator it;
-                it = active_clients.emplace(client_socket).first;
+                it = active_clients.insert(client_socket).first;
                 std::thread handler = std::thread(&ServerImpl::handleConnection, this, it);
                 handler.detach();
 
@@ -168,6 +168,7 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
 
 void ServerImpl::handleConnection(std::set<int>::iterator it) {
 
+    // start new handler
     _logger->debug("open new connection");
     std::size_t arg_remains;
     Protocol::Parser parser;

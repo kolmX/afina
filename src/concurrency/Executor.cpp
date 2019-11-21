@@ -1,96 +1,94 @@
-#include "afina/concurrency/Executor.h"
+#include <afina/concurrency/Executor.h>
 
 #include <cassert>
 
 namespace Afina {
 namespace Concurrency {
-Executor::Executor(const uint32_t low_watermark, const uint32_t high_watermark,
-    const uint32_t max_queue_size, const  uint32_t idle_time){
 
-        this->low_watermark = low_watermark;
-        this->high_watermark = high_watermark;
-        this->max_queue_size = max_queue_size;
-        this->idle_time = idle_time;
-        this->num_idle = low_watermark;
+Executor::Executor(const uint32_t low_watermark, const uint32_t high_watermark, const uint32_t max_queue_size,
+                   const uint32_t idle_time) {
 
-        state.store(State::kRun);
+    this->low_watermark = low_watermark;
+    this->high_watermark = high_watermark;
+    this->max_queue_size = max_queue_size;
+    this->idle_time = idle_time;
+    this->num_idle = low_watermark;
+    num_threads = this->low_watermark;
+    // one thread  is here
+    state = State::kRun;
 
-        for (size_t i = 0; i < low_watermark; i++){
-            threads.emplace_back(std::thread(&Executor::perform, this, ThreadType::low));
-        }
-}
-
-void Executor::Stop(const bool await){
-
-    state.store(State::kStopping);
-    //unblock all thread if task queue is empty
-    empty_tasks.notify_all();
-
-    if (await){
-        for (std::thread &thread:threads){
-            assert(thread.joinable());
-            thread.join();
-        }
-        state.store(State::kStopped);
+    for (size_t i = 0; i < low_watermark; i++) {
+        // threads.emplace_back(std::thread(&Executor::perform, this));
+        std::thread t = std::thread(&Executor::perform, this);
+        t.detach();
     }
 }
 
-bool Executor::have_tasks(){
-    std::lock_guard<std::mutex> lk(state_mutex);
-    return tasks.empty();
-}
+void Executor::Stop(const bool await) {
 
-void Executor::exec_func(){
+    std::unique_lock<std::mutex> lk(_mutex);
+    state = State::kStopping;
+    // unblock all thread
 
-
-    std::unique_lock<std::mutex> lk(state_mutex);
-    if (tasks.empty()){
+    if (!num_threads) {
+        state = State::kStopped;
         return;
     }
 
-    auto func = tasks.front();
-    tasks.pop_front();
-    lk.unlock();
+    empty_condition.notify_all();
 
-    num_idle--;
-    func();
-    num_idle++;
-    return;
+    if (await) {
 
+        while (state != State::kStopped) {
+            empty_threads.wait(lk);
+        }
+    }
 }
 
-void Executor::perform(const ThreadType type){
+void Executor::perform() {
 
-    while (state.load() == State::kRun){
-        if (type == ThreadType::low){
-            std::unique_lock<std::mutex> lk(cond_mutex);
-            while ( have_tasks()){
-                empty_tasks.wait(lk);
-            }
-        }
+    for (;;) {
 
-        else if (type == ThreadType::high){
-            std::unique_lock<std::mutex> lk(cond_mutex);
-            while (have_tasks()){
-                if (empty_tasks.wait_for(lk, milliseconds(idle_time)) == std::cv_status::timeout){
+        std::unique_lock<std::mutex> lk(_mutex);
+        if (num_threads > low_watermark) {
+            while (tasks.empty() && state == State::kRun) {
+                if (empty_condition.wait_for(lk, milliseconds(idle_time)) == std::cv_status::timeout) {
                     num_idle--;
+                    num_threads--;
                     return;
                 }
             }
+        } else {
+            while (tasks.empty() && state == State::kRun) {
+                empty_condition.wait(lk);
+            }
         }
 
-        if (state.load() == State::kStopping){
+        if (tasks.empty() && state == State::kStopping) {
             break;
         }
-        exec_func();
+
+        auto func = tasks.front();
+        tasks.pop_front();
+        lk.unlock();
+
+        num_idle--;
+        func();
+        num_idle++;
     }
 
-    while (state.load() == State::kStopping && have_tasks()){
-        exec_func();
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        num_idle--;
+        num_threads--;
+        if (!num_threads) {
+            state = State::kStopped;
+            empty_threads.notify_all();
+        }
+
+        return;
     }
-    return;
-}
+} // namespace Concurrency
 
-
-}
+} // namespace Concurrency
 } // namespace Afina

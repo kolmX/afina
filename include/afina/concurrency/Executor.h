@@ -44,7 +44,7 @@ public:
         // Prepare "task"
         auto exec = std::bind(std::forward<F>(func), std::forward<Types>(args)...);
 
-        std::unique_lock<std::mutex> lock(state_mutex);
+        std::unique_lock<std::mutex> lock(_mutex);
         if (state != State::kRun) {
             return false;
         }
@@ -55,8 +55,11 @@ public:
         tasks.push_back(exec);
         if (num_idle.load()) {
             empty_condition.notify_one();
-        } else {
-            threads.emplace_back(std::thread(&Executor::perform, this, ThreadType::high));
+        } else if (num_threads <= high_watermark) {
+            num_threads++;
+            num_idle++;
+            std::thread t = std::thread(&Executor::perform, this);
+            // threads.emplace_back(std::thread(&Executor::perform, this, ThreadType::high));
         }
         return true;
     }
@@ -74,7 +77,6 @@ private:
         kStopped
     };
 
-    enum class ThreadType { low, high };
     using milliseconds = std::chrono::milliseconds;
     // No copy/move/assign allowed
     Executor(const Executor &) = delete;
@@ -86,21 +88,26 @@ private:
      * Main function that all pool threads are running. It polls internal task queue and execute tasks
      */
 
-    void perform(const ThreadType type);
+    void perform();
 
     /**
      * Mutex to protect state below from concurrent modification
      */
-    std::mutex state_mutex;
+    std::mutex _mutex;
     /**
      * Conditional variable to await new data in case of empty queue
      */
     std::condition_variable empty_condition;
 
     /**
+     * Conditional variable to await when each thread finish his execution
+     */
+    std::condition_variable empty_threads;
+
+    /**
      * Vector of actual threads that perorm execution
      */
-    std::vector<std::thread> threads;
+    // std::vector<std::thread> threads;
 
     /**
      * Task queue
@@ -110,7 +117,7 @@ private:
     /**
      * Flag to stop bg threads
      */
-    std::atomic<State> state;
+    State state;
 
     /**
      * Thread pool params
@@ -118,7 +125,7 @@ private:
     uint32_t max_queue_size;
     uint32_t low_watermark, high_watermark;
     uint32_t idle_time;
-
+    uint32_t num_threads;
     /**
      * Number threads in idle state
      */

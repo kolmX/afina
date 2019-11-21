@@ -1,12 +1,12 @@
 #include "ServerImpl.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <stdexcept>
-#include <vector>
-#include <chrono>
 
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -17,11 +17,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "spdlog/logger.h"
+#include <spdlog/logger.h>
 
-#include "afina/Storage.h"
-#include "afina/execute/Command.h"
-#include "afina/logging/Service.h"
+#include <afina/Storage.h>
+#include <afina/execute/Command.h>
+#include <afina/logging/Service.h>
 
 #include "protocol/Parser.h"
 
@@ -35,61 +35,18 @@ ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Loggi
 // See Server.h
 ServerImpl::~ServerImpl() {}
 
-
 // See Server.h
 void ServerImpl::Stop() {
 
-    std::string waiting_msg = "You have 10 seconds that write arguments!!!\n";
-    running.store(false);
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        running.store(false);
+        shutdown(_server_socket, SHUT_RDWR);
 
-    std::map<int, ConnectionState>::const_iterator it;
-
-    for (it = active_clients_state.begin(); it != active_clients_state.end(); it++){
-        int client_socket = it->first;
-
-        switch (it->second){
-            case ConnectionState::idle:{
-                shutdown(client_socket, SHUT_RD);
-                break;
-            }
-
-            case ConnectionState::waitArgs:{
-                bool is_timeout = false;
-                if (send(client_socket, waiting_msg.c_str(), waiting_msg.size(), 0) <= 0){
-                    _logger->warn("Failed to send response");
-                }
-
-                {
-                    std::unique_lock<std::mutex> lk(_state_mutex);
-                    while(it->second != ConnectionState::executing){
-                        if (state_cv.wait_for(lk, std::chrono::seconds(10)) == std::cv_status::timeout){
-                            is_timeout = true;
-                            break;
-                        }
-                    }
-
-                    if (is_timeout){
-                        shutdown(client_socket, SHUT_RDWR);
-                        break;
-                    }
-                }
-                //args was writen so go to executing case!
-            }
-
-            case ConnectionState::executing:{
-                {
-                    std::unique_lock<std::mutex> lk(_state_mutex);
-                    while (it->second != ConnectionState::idle){
-                        state_cv.wait(lk);
-                    }
-
-                }
-                shutdown(client_socket, SHUT_RDWR);
-                break;
-            }
+        for (auto connection : active_clients) {
+            shutdown(connection, SHUT_RD);
         }
     }
-    shutdown(_server_socket, SHUT_RDWR);
 }
 
 // See Server.h
@@ -97,9 +54,7 @@ void ServerImpl::Join() {
 
     assert(_thread.joinable());
     _thread.join();
-    close(_server_socket);
 }
-
 
 // See Server.h
 void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
@@ -141,7 +96,6 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     running.store(true);
-    connections = 0;
     _thread = std::thread(&ServerImpl::OnRun, this, n_workers);
 }
 
@@ -180,70 +134,62 @@ void ServerImpl::OnRun(const uint32_t n_workers) {
         // Configure read timeout
         {
             struct timeval tv;
-            tv.tv_sec = 0; // TODO: make it configurable
+            tv.tv_sec = 10; // TODO: make it configurable
             tv.tv_usec = 0;
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
 
-        //check that max number of connections isn't achived
+        // check that max number of connections isn't achived
         {
-            std::lock_guard<std::mutex> lk(_connections_mutex);
-            if (connections < n_workers){
+            std::lock_guard<std::mutex> lk(_mutex);
+            if (running.load() && active_clients.size() < n_workers) {
 
-                connections++;
+                std::set<int>::iterator it;
+                it = active_clients.insert(client_socket).first;
+                std::thread handler = std::thread(&ServerImpl::handleConnection, this, it);
+                handler.detach();
 
-                std::map<const int, ConnectionState>::iterator it;
-                it = active_clients_state.insert(
-                    std::pair<const int, ConnectionState>(client_socket, ConnectionState::idle)
-                ).first;
-
-                executor.Execute(&ServerImpl::handleConnection, this, it);
-
-            }
-            else{
-                std::string overflow_msg = "Too much connections on server! Your connection will be closed!\n";
-                if (send(client_socket, overflow_msg.c_str(), overflow_msg.size(), 0) <= 0) {
-                    _logger->warn("Failed to send response");
-                }
+            } else {
+                _logger->warn("Too much connections!!!");
                 close(client_socket);
             }
         }
     }
-    executor.Stop();
-    std::unique_lock<std::mutex> lk(_mutex);
-    while(connections.load()){
-        _cv.wait(lk);
+    {
+        std::unique_lock<std::mutex> lk(_mutex);
+        while (active_clients.size()) {
+            _cv.wait(lk);
+        }
     }
-
+    close(_server_socket);
     // Cleanup on exit...
     _logger->warn("Network stopped");
 }
 
+void ServerImpl::handleConnection(std::set<int>::iterator it) {
 
-void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator it){
-
+    // start new handler
     _logger->debug("open new connection");
     std::size_t arg_remains;
     Protocol::Parser parser;
     std::string argument_for_command;
     std::unique_ptr<Execute::Command> command_to_execute;
-    int client_socket = it->first;
-
+    int client_socket = *it;
 
     try {
         int readed_bytes = -1;
         char client_buffer[4096];
-        while (((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0)) {
-
+        while ((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
             _logger->debug("Got {} bytes from socket", readed_bytes);
+
+            // Single block of data readed from the socket could trigger inside actions a multiple times,
+            // for example:
+            // - read#0: [<command1 start>]
+            // - read#1: [<command1 end> <argument> <command2> <argument for command 2> <command3> ... ]
             while (readed_bytes > 0) {
                 _logger->debug("Process {} bytes", readed_bytes);
                 // There is no command yet
                 if (!command_to_execute) {
-                    {
-                        std::lock_guard<std::mutex> lk(_state_mutex);
-                        it->second = ConnectionState::idle;
-                    }
 
                     std::size_t parsed = 0;
                     if (parser.Parse(client_buffer, readed_bytes, parsed)) {
@@ -255,6 +201,8 @@ void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator
                             arg_remains += 2;
                         }
                     }
+                    // Parsed might fails to consume any bytes from input stream. In real life that could happens,
+                    // for example, because we are working with UTF-16 chars and only 1 byte left in stream
                     if (parsed == 0) {
                         break;
                     } else {
@@ -265,11 +213,6 @@ void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator
 
                 // There is command, but we still wait for argument to arrive...
                 if (command_to_execute && arg_remains > 0) {
-                    {
-                        std::lock_guard<std::mutex> lk (_state_mutex);
-                        it->second = ConnectionState::waitArgs;
-                    }
-
                     _logger->debug("Fill argument: {} bytes of {}", readed_bytes, arg_remains);
                     // There is some parsed command, and now we are reading argument
                     std::size_t to_read = std::min(arg_remains, std::size_t(readed_bytes));
@@ -282,16 +225,10 @@ void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator
 
                 // Thre is command & argument - RUN!
                 if (command_to_execute && arg_remains == 0) {
-                    {
-                        std::lock_guard<std::mutex> lk(_state_mutex);
-                        it->second = ConnectionState::executing;
-                    }
-                    state_cv.notify_one();
 
                     _logger->debug("Start command execution");
 
                     std::string result;
-
                     command_to_execute->Execute(*pStorage, argument_for_command, result);
 
                     // Send response
@@ -304,33 +241,29 @@ void ServerImpl::handleConnection(std::map<const int, ConnectionState>::iterator
                     command_to_execute.reset();
                     argument_for_command.resize(0);
                     parser.Reset();
-                    {
-                        std::lock_guard<std::mutex> lk(_state_mutex);
-                        it->second = ConnectionState::idle;
-                    }
-                    state_cv.notify_one();
-
                 }
-            }
+            } // while (readed_bytes)
+        }
+
+        if (readed_bytes == 0) {
+            _logger->debug("Connection closed");
+        } else {
+            throw std::runtime_error(std::string(strerror(errno)));
         }
     } catch (std::runtime_error &ex) {
         _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
     }
-    _logger->debug("Connection closed!");
-    close(client_socket);
-
+    _logger->debug("exit");
     {
-        std::lock_guard<std::mutex> lk(_connections_mutex);
-        connections--;
-        active_clients_state.erase(it);
-        if (!connections){
+        std::lock_guard<std::mutex> lk(_mutex);
+        active_clients.erase(it);
+        close(client_socket);
+        if (active_clients.empty()) {
+            _logger->debug("closed");
             _cv.notify_all();
         }
     }
 }
-
-
-
 
 } // namespace MTblocking
 } // namespace Network

@@ -2,12 +2,12 @@
 #define AFINA_NETWORK_MT_BLOCKING_SERVER_H
 
 #include <atomic>
-#include <thread>
-#include <mutex>
-#include <map>
 #include <condition_variable>
-#include "afina/concurrency/Executor.h"
-#include "afina/network/Server.h"
+#include <mutex>
+#include <set>
+#include <thread>
+
+#include <afina/network/Server.h>
 
 namespace spdlog {
 class logger;
@@ -42,43 +42,23 @@ protected:
     void OnRun(const uint32_t n_workers);
 
 private:
+    void handleConnection(std::set<int>::iterator it);
 
-    enum class ConnectionState{
-        idle,
-
-        waitArgs,
-
-        executing
-    };
-
-    void handleConnection(std::map<const int, ConnectionState>::iterator it);
-
-    //Thread pool
-    Afina::Concurrency::Executor executor;
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
 
     // Atomic flag to notify threads when it is time to stop. Note that
     // flag must be atomic in order to safely publisj changes cross thread
-    // bound
-
+    // bounds
     std::atomic<bool> running;
-    std::atomic<int> connections;
     // Server socket to accept connections on
     int _server_socket;
-    std::map<const int, ConnectionState> active_clients_state;
+    std::set<int> active_clients;
 
     // Thread to run network on
     std::thread _thread;
     std::mutex _mutex;
     std::condition_variable _cv;
-
-
-    std::mutex _connections_mutex;
-
-    std::mutex _state_mutex;
-    std::condition_variable state_cv;
-
 };
 
 } // namespace MTblocking

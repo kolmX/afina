@@ -83,6 +83,7 @@ void Connection::DoRead() {
 
                     // Send response
                     result += "\r\n";
+                    _logger->debug("Result {}", result.c_str());
                     result_buffer.push_back(result);
                     _event.events |= EPOLLOUT;
                     // Prepare for the next command
@@ -113,29 +114,29 @@ void Connection::DoWrite() {
 
     struct iovec output_buffers[output_size];
     for (int i = 0; i < output_size; i++) {
-        output_buffers[i].iov_base = &result_buffer[i];
+        output_buffers[i].iov_base = &result_buffer[i][0];
         output_buffers[i].iov_len = result_buffer[i].size();
     }
 
     output_buffers[0].iov_base = (char *)output_buffers[0].iov_base + last_writed_bytes;
     output_buffers[0].iov_len -= last_writed_bytes;
 
-    int writed_buffers;
-    for (writed_buffers = 0; writed_buffers < output_size; writed_buffers++) {
-        last_writed_bytes =
-            write(_socket, output_buffers[writed_buffers].iov_base, output_buffers[writed_buffers].iov_len);
-        // error occured
-        if (last_writed_bytes < 0) {
-            alive = false;
-            throw std::runtime_error(std::string(strerror(errno)));
-        }
-        // output buffer is filled up
-        else if (!last_writed_bytes) {
+    ssize_t writed_bytes = writev(_socket, output_buffers, output_size);
+    if (writed_bytes < 0) {
+        alive = false;
+        throw std::runtime_error(std::string(strerror(errno)));
+    }
+
+    int writed_iovecs = 0;
+    for (writed_iovecs = 0; writed_iovecs < output_size; writed_iovecs++) {
+        writed_bytes -= output_buffers[writed_iovecs].iov_len;
+        if (writed_bytes < 0) {
+            last_writed_bytes = output_buffers[writed_iovecs].iov_len + writed_bytes;
             break;
         }
     }
 
-    result_buffer.erase(result_buffer.begin(), result_buffer.begin() + writed_buffers);
+    result_buffer.erase(result_buffer.begin(), result_buffer.begin() + writed_iovecs);
     // all buffers are writed
     if (result_buffer.empty()) {
         _event.events ^= EPOLLOUT;

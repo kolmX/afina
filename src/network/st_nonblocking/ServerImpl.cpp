@@ -59,6 +59,11 @@ void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) 
     }
 
     int opts = 1;
+    if (setsockopt(_server_socket, SOL_SOCKET, SO_REUSEADDR, &opts, sizeof(opts)) == -1) {
+        close(_server_socket);
+        throw std::runtime_error("Socket setsockopt() failed");
+    }
+
     if (setsockopt(_server_socket, SOL_SOCKET, (SO_KEEPALIVE), &opts, sizeof(opts)) == -1) {
         close(_server_socket);
         throw std::runtime_error("Socket setsockopt() failed: " + std::string(strerror(errno)));
@@ -146,13 +151,12 @@ void ServerImpl::OnRun() {
                 pc->OnError();
 
             }
-            // clisent close connection
+            // client close connection
             else if (current_event.events & EPOLLRDHUP) {
                 pc->OnClose();
             } else {
                 // Depends on what connection wants...
                 if (current_event.events & EPOLLIN) {
-                    _logger->debug("in do read");
                     pc->DoRead();
                 }
                 if (current_event.events & EPOLLOUT) {
@@ -163,7 +167,7 @@ void ServerImpl::OnRun() {
             // Does it alive?
             if (!pc->isAlive()) {
                 if (epoll_ctl(epoll_descr, EPOLL_CTL_DEL, pc->_socket, &pc->_event)) {
-                    _logger->error("Failed to delete connection from epoll");
+                    _logger->error("Failed to delete connection from epoll:{}", strerror(errno));
                 }
                 pc->OnClose();
                 active_connections.erase(pc);
@@ -185,6 +189,7 @@ void ServerImpl::OnRun() {
     }
     active_connections.clear();
     _logger->warn("Acceptor stopped");
+    close(_server_socket);
 }
 
 void ServerImpl::OnNewConnection(int epoll_descr) {

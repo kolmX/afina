@@ -74,7 +74,12 @@ void Executor::perform() {
         lk.unlock();
 
         num_idle--;
-        func();
+        try {
+            func();
+        } catch (...) {
+            std::terminate();
+        }
+
         num_idle++;
     }
 

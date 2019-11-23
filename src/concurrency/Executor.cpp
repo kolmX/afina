@@ -27,14 +27,16 @@ Executor::Executor(const uint32_t low_watermark, const uint32_t high_watermark, 
 void Executor::Stop(const bool await) {
 
     std::unique_lock<std::mutex> lk(_mutex);
-    state = State::kStopping;
-    // unblock all thread
+    if (state == State::kStopped) {
+        return;
+    }
 
+    state = State::kStopping;
     if (!num_threads) {
         state = State::kStopped;
         return;
     }
-
+    // unblock all thread
     empty_condition.notify_all();
 
     if (await) {

@@ -88,7 +88,9 @@ void Executor::perform() {
 
         return;
     }
-} // namespace Concurrency
+}
+
+Executor::~Executor() { Stop(true); }
 
 } // namespace Concurrency
 } // namespace Afina

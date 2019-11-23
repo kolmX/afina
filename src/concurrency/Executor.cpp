@@ -48,14 +48,13 @@ void Executor::Stop(const bool await) {
 void Executor::perform() {
 
     for (;;) {
-
+        bool isTimeout = false;
         std::unique_lock<std::mutex> lk(_mutex);
         if (num_threads > low_watermark) {
             while (tasks.empty() && state == State::kRun) {
                 if (empty_condition.wait_for(lk, milliseconds(idle_time)) == std::cv_status::timeout) {
-                    num_idle--;
-                    num_threads--;
-                    return;
+                    isTimeout = true;
+                    break;
                 }
             }
         } else {
@@ -64,7 +63,7 @@ void Executor::perform() {
             }
         }
 
-        if (tasks.empty() && state == State::kStopping) {
+        if ((tasks.empty() && state == State::kStopping) || (isTimeout)) {
             break;
         }
 

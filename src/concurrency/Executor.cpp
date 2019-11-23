@@ -65,7 +65,7 @@ void Executor::perform() {
             }
         }
 
-        if ((tasks.empty() && state == State::kStopping) || (isTimeout && task.empty())) {
+        if ((tasks.empty() && state == State::kStopping) || (isTimeout && state == State::kRun)) {
             break;
         }
 

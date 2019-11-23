@@ -55,13 +55,16 @@ public:
         tasks.push_back(exec);
         if (num_idle.load()) {
             empty_condition.notify_one();
-        } else if (num_threads <= high_watermark) {
+            return true;
+
+        } else if (num_threads < high_watermark) {
             num_threads++;
             num_idle++;
             std::thread t = std::thread(&Executor::perform, this);
+            return true;
             // threads.emplace_back(std::thread(&Executor::perform, this, ThreadType::high));
         }
-        return true;
+        return false;
     }
 
 private:

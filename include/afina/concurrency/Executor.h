@@ -61,8 +61,8 @@ public:
             num_threads++;
             num_idle++;
             std::thread t = std::thread(&Executor::perform, this);
+            t.detach();
             return true;
-            // threads.emplace_back(std::thread(&Executor::perform, this, ThreadType::high));
         }
         return false;
     }

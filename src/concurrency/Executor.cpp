@@ -64,12 +64,12 @@ void Executor::perform() {
 
         if ((tasks.empty() && state == State::kStopping)) {
             break
-        } else if (isTimeout) {
+        }
+        if (isTimeout) {
             if (num_threads > low_watermark) {
                 break;
-            } else {
-                continue;
             }
+            continue;
         }
         auto func = tasks.front();
         tasks.pop_front();

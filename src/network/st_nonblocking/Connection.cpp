@@ -78,14 +78,15 @@ void Connection::DoRead() {
                 if (command_to_execute && arg_remains == 0) {
                     _logger->debug("Start command execution");
 
-                    std::string result;
-                    command_to_execute->Execute(*pStorage, argument_for_command, result);
+                    std::string ans;
+                    command_to_execute->Execute(*pStorage, argument_for_command, ans);
 
-                    // Send response
-                    result += "\r\n";
-                    _logger->debug("Result {}", result.c_str());
-                    result_buffer.push_back(result);
-                    _event.events |= EPOLLOUT;
+                    ans += "\r\n";
+                    _logger->debug("Result {}", ans.c_str());
+                    result_buffer.push_back(ans);
+                    if (not(EPOLLOUT & _event.events)) {
+                        _event.events |= EPOLLOUT;
+                    }
                     // Prepare for the next command
                     command_to_execute.reset();
                     argument_for_command.resize(0);

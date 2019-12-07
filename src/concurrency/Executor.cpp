@@ -53,12 +53,10 @@ void Executor::perform() {
 
         std::unique_lock<std::mutex> lk(_mutex);
         bool isTimeout = false;
-        if (num_threads < high_watermark) {
-            while (tasks.empty() && state == State::kRun) {
-                if (empty_condition.wait_for(lk, milliseconds(idle_time)) == std::cv_status::timeout) {
-                    isTimeout = true;
-                    break;
-                }
+        while (tasks.empty() && state == State::kRun) {
+            if (empty_condition.wait_for(lk, milliseconds(idle_time)) == std::cv_status::timeout) {
+                isTimeout = true;
+                break;
             }
         }
 
@@ -89,11 +87,10 @@ void Executor::perform() {
         std::lock_guard<std::mutex> lk(_mutex);
         num_idle--;
         num_threads--;
-        if (!num_threads) {
+        if (!num_threads && state == State::kStopping) {
             state = State::kStopped;
             empty_threads.notify_all();
         }
-
         return;
     }
 }

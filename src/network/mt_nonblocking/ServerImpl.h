@@ -1,11 +1,9 @@
 #ifndef AFINA_NETWORK_MT_NONBLOCKING_SERVER_H
 #define AFINA_NETWORK_MT_NONBLOCKING_SERVER_H
 
-#include <set>
 #include <thread>
 #include <vector>
 
-#include "Connection.h"
 #include <afina/network/Server.h>
 
 namespace spdlog {
@@ -18,7 +16,7 @@ namespace MTnonblock {
 
 // Forward declaration, see Worker.h
 class Worker;
-class Connection;
+
 /**
  * # Network resource manager implementation
  * Epoll based server
@@ -65,8 +63,6 @@ private:
 
     // threads serving read/write requests
     std::vector<Worker> _workers;
-
-    std::set<Connection *> active_connections;
 };
 
 } // namespace MTnonblock

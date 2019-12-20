@@ -59,6 +59,11 @@ void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) 
     }
 
     int opts = 1;
+    if (setsockopt(_server_socket, SOL_SOCKET, SO_REUSEADDR, &opts, sizeof(opts)) == -1) {
+        close(_server_socket);
+        throw std::runtime_error("Socket setsockopt() failed");
+    }
+
     if (setsockopt(_server_socket, SOL_SOCKET, (SO_KEEPALIVE), &opts, sizeof(opts)) == -1) {
         close(_server_socket);
         throw std::runtime_error("Socket setsockopt() failed: " + std::string(strerror(errno)));
@@ -144,7 +149,10 @@ void ServerImpl::OnRun() {
             auto old_mask = pc->_event.events;
             if ((current_event.events & EPOLLERR) || (current_event.events & EPOLLHUP)) {
                 pc->OnError();
-            } else if (current_event.events & EPOLLRDHUP) {
+
+            }
+            // client close connection
+            else if (current_event.events & EPOLLRDHUP) {
                 pc->OnClose();
             } else {
                 // Depends on what connection wants...
@@ -159,30 +167,34 @@ void ServerImpl::OnRun() {
             // Does it alive?
             if (!pc->isAlive()) {
                 if (epoll_ctl(epoll_descr, EPOLL_CTL_DEL, pc->_socket, &pc->_event)) {
-                    _logger->error("Failed to delete connection from epoll");
+                    _logger->error("Failed to delete connection from epoll:{}", strerror(errno));
                 }
-
-                close(pc->_socket);
                 pc->OnClose();
-
+                active_connections.erase(pc);
                 delete pc;
             } else if (pc->_event.events != old_mask) {
                 if (epoll_ctl(epoll_descr, EPOLL_CTL_MOD, pc->_socket, &pc->_event)) {
                     _logger->error("Failed to change connection event mask");
-
-                    close(pc->_socket);
                     pc->OnClose();
-
+                    active_connections.erase(pc);
                     delete pc;
                 }
             }
         }
     }
+    // kill all alive connections
+    for (Connection *connection : active_connections) {
+        connection->OnClose();
+        delete connection;
+    }
+    active_connections.clear();
     _logger->warn("Acceptor stopped");
+    close(_server_socket);
 }
 
 void ServerImpl::OnNewConnection(int epoll_descr) {
     for (;;) {
+        _logger->debug("In OnNewConnection");
         struct sockaddr in_addr;
         socklen_t in_len;
 
@@ -207,7 +219,8 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
         }
 
         // Register the new FD to be monitored by epoll.
-        Connection *pc = new(std::nothrow) Connection(infd);
+        Connection *pc = new (std::nothrow) Connection(infd, pStorage, _logger);
+        active_connections.insert(pc);
         if (pc == nullptr) {
             throw std::runtime_error("Failed to allocate connection");
         }
@@ -217,6 +230,7 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
         if (pc->isAlive()) {
             if (epoll_ctl(epoll_descr, EPOLL_CTL_ADD, pc->_socket, &pc->_event)) {
                 pc->OnError();
+                active_connections.erase(pc);
                 delete pc;
             }
         }

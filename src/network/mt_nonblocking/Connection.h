@@ -55,6 +55,7 @@ private:
     char client_buffer[4096];
     std::vector<std::string> result_buffer;
     size_t last_writed_bytes;
+    std::mutex mutex_;
     //--------------------------------------------------------------------------
 };
 

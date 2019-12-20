@@ -9,23 +9,29 @@ namespace MTnonblock {
 
 // See Connection.h
 void Connection::Start() {
+    std::lock_guard<std::mutex> lock(mutex_);
     _event.events |= EPOLLIN | EPOLLRDHUP | EPOLLERR;
     alive = true;
 }
 
 // See Connection.h
-void Connection::OnError() { alive = false; }
+void Connection::OnError() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    alive = false;
+}
 
 // See Connection.h
 void Connection::OnClose() {
+    std::lock_guard<std::mutex> lock(mutex_);
     close(_socket);
     alive = false;
 }
 
 // See Connection.h
 void Connection::DoRead() {
-
+    std::lock_guard<std::mutex> lock(mutex_);
     try {
+
         int readed_bytes = -1;
         while ((readed_bytes = read(_socket, client_buffer + offset, length)) > 0) {
             _logger->debug("Got {} bytes from socket", readed_bytes);
@@ -106,7 +112,7 @@ void Connection::DoRead() {
 
 // See Connection.h
 void Connection::DoWrite() {
-
+    std::lock_guard<std::mutex> lock(mutex_);
     size_t output_size = result_buffer.size();
     if (result_buffer.size() > 64) {
         output_size = 64;

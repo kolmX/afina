@@ -12,6 +12,13 @@ void Engine::Store(context &ctx) {
     ctx.Low = &top;
     ctx.Hight = StackBottom;
     size_t size = ctx.Hight - ctx.Low;
+    if (size < 0) {
+        char *tmp;
+        tmp = ctx.Hight;
+        ctx.Hight = ctx.Low;
+        ctx.Low = tmp;
+        size = -size;
+    }
 
     if (std::get<1>(ctx.Stack) < size) {
         delete[] std::get<0>(ctx.Stack);
@@ -24,7 +31,7 @@ void Engine::Store(context &ctx) {
 void Engine::Restore(context &ctx) {
 
     char stack_ptr;
-    if (&stack_ptr >= ctx.Low) {
+    if (&stack_ptr >= ctx.Low && &stack_ptr <= ctx.Hight) {
         Restore(ctx);
     }
 
@@ -46,15 +53,21 @@ void Engine::yield() {
 }
 
 void Engine::sched(void *routine_) {
-    if (cur_routine != nullptr) {
-        // update Enviroment
-        if (setjmp(cur_routine->Environment) > 0) {
-            return;
+    if (routine == = cur_routine) {
+        return;
+    } else if (!routine) {
+        yield();
+    } else {
+        if (cur_routine != nullptr) {
+            // update Enviroment
+            if (setjmp(cur_routine->Environment) > 0) {
+                return;
+            }
+            Store(*cur_routine);
         }
-        Store(*cur_routine);
+        cur_routine = static_cast<context *>(routine_);
+        Restore(*cur_routine);
     }
-    cur_routine = static_cast<context *>(routine_);
-    Restore(*cur_routine);
 }
 
 } // namespace Coroutine

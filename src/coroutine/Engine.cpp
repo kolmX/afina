@@ -53,7 +53,7 @@ void Engine::yield() {
 }
 
 void Engine::sched(void *routine_) {
-    if (routine == = cur_routine) {
+    if (routine == cur_routine) {
         return;
     } else if (!routine) {
         yield();

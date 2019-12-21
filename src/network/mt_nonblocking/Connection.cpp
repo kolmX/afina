@@ -120,7 +120,7 @@ void Connection::DoWrite() {
 
     struct iovec output_buffers[output_size];
     for (int i = 0; i < output_size; i++) {
-        output_buffers[i].iov_base = &result_buffer[i][0];
+        output_buffers[i].iov_base = result_buffer[i].begin();
         output_buffers[i].iov_len = result_buffer[i].size();
     }
 
